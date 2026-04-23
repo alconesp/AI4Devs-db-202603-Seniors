@@ -14,26 +14,77 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Lookup / reference tables (user-managed values) ────────────────────────
+//
+// These replace enums so that administrators can add/rename/reorder values
+// without a schema migration. Each table follows the same structure:
+//   id   — surrogate PK (FK target in the main tables)
+//   name — the display value; must be unique within the category
+
+model PositionStatus {
+  id          Int        @id @default(autoincrement())
+  name        String     @unique @db.VarChar(100) // e.g. 'Draft', 'Open', 'Closed'
+  description String?    @db.Text
+  positions   Position[]
+
+  @@map("position_status")
+}
+
+model ApplicationStatus {
+  id           Int           @id @default(autoincrement())
+  name         String        @unique @db.VarChar(100) // e.g. 'Pending', 'Reviewing', 'Rejected', 'Accepted'
+  description  String?       @db.Text
+  applications Application[]
+
+  @@map("application_status")
+}
+
+model InterviewResult {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique @db.VarChar(100) // e.g. 'Pending', 'Passed', 'Failed'
+  description String?     @db.Text
+  interviews  Interview[]
+
+  @@map("interview_result")
+}
+
+model EmploymentType {
+  id          Int        @id @default(autoincrement())
+  name        String     @unique @db.VarChar(100) // e.g. 'Full-time', 'Part-time', 'Contract'
+  description String?    @db.Text
+  positions   Position[]
+
+  @@map("employment_type")
+}
+
+// ─── Existing models (table names unchanged) ────────────────────────────────
+
 model Candidate {
-  id                Int               @id @default(autoincrement())
-  firstName         String            @db.VarChar(100)
-  lastName          String            @db.VarChar(100)
-  email             String            @unique @db.VarChar(255)
-  phone             String?           @db.VarChar(15)
-  address           String?           @db.VarChar(100)
-  educations        Education[]
-  workExperiences   WorkExperience[]
-  resumes           Resume[]
+  id              Int              @id @default(autoincrement())
+  firstName       String           @db.VarChar(100)
+  lastName        String           @db.VarChar(100)
+  email           String           @unique @db.VarChar(255)
+  phone           String?          @db.VarChar(15)
+  address         String?          @db.VarChar(100)
+  educations      Education[]
+  workExperiences WorkExperience[]
+  resumes         Resume[]
+  applications    Application[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  deletedAt       DateTime?        // soft-delete for GDPR / history preservation
 }
 
 model Education {
-  id            Int       @id @default(autoincrement())
-  institution   String    @db.VarChar(100)
-  title         String    @db.VarChar(250)
-  startDate     DateTime
-  endDate       DateTime?
-  candidateId   Int
-  candidate     Candidate @relation(fields: [candidateId], references: [id])
+  id          Int       @id @default(autoincrement())
+  institution String    @db.VarChar(100)
+  title       String    @db.VarChar(250)
+  startDate   DateTime
+  endDate     DateTime?
+  candidateId Int
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([candidateId])
 }
 
 model WorkExperience {
@@ -44,7 +95,9 @@ model WorkExperience {
   startDate   DateTime
   endDate     DateTime?
   candidateId Int
-  candidate   Candidate @relation(fields: [candidateId], references: [id])
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([candidateId])
 }
 
 model Resume {
@@ -53,5 +106,158 @@ model Resume {
   fileType    String    @db.VarChar(50)
   uploadDate  DateTime
   candidateId Int
-  candidate   Candidate @relation(fields: [candidateId], references: [id])
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([candidateId])
+}
+
+// ─── New models (snake_case table names via @@map) ───────────────────────────
+
+model Company {
+  id          Int        @id @default(autoincrement())
+  name        String     @unique @db.VarChar(255)
+  description String?    @db.Text  // moved from Position.companyDescription (3NF fix)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  employees   Employee[]
+  positions   Position[]
+
+  @@map("company")
+}
+
+model Employee {
+  id         Int         @id @default(autoincrement())
+  companyId  Int
+  name       String      @db.VarChar(100)
+  email      String      @unique @db.VarChar(255)
+  role       String      @db.VarChar(100)
+  isActive   Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  interviews Interview[]
+
+  @@index([companyId])
+  @@index([isActive])
+  @@map("employee")
+}
+
+model InterviewFlow {
+  id          Int             @id @default(autoincrement())
+  description String          @db.VarChar(255)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  steps       InterviewStep[]
+  positions   Position[]
+
+  @@map("interview_flow")
+}
+
+model InterviewType {
+  id          Int             @id @default(autoincrement())
+  name        String          @unique @db.VarChar(100)
+  description String?         @db.Text
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  steps       InterviewStep[]
+
+  @@map("interview_type")
+}
+
+model InterviewStep {
+  id              Int           @id @default(autoincrement())
+  interviewFlowId Int
+  interviewTypeId Int
+  name            String        @db.VarChar(100)
+  orderIndex      Int           // must be > 0 — enforced at application level
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  interviewFlow   InterviewFlow @relation(fields: [interviewFlowId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  interviewType   InterviewType @relation(fields: [interviewTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  interviews      Interview[]
+
+  @@unique([interviewFlowId, orderIndex]) // no duplicate ordering within a flow
+  @@index([interviewFlowId])
+  @@index([interviewTypeId])
+  @@map("interview_step")
+}
+
+model Position {
+  id                  Int            @id @default(autoincrement())
+  companyId           Int
+  interviewFlowId     Int
+  title               String         @db.VarChar(255)
+  statusId            Int
+  isVisible           Boolean        @default(false)
+  location            String?        @db.VarChar(255)
+  jobDescription      String?        @db.Text          // merged from description + jobDescription (redundancy fix)
+  requirements        String?        @db.Text
+  responsibilities    String?        @db.Text
+  salaryMin           Decimal?       @db.Decimal(10, 2) // salaryMin <= salaryMax enforced at application level
+  salaryMax           Decimal?       @db.Decimal(10, 2)
+  employmentTypeId    Int?
+  benefits            String?        @db.Text
+  applicationDeadline DateTime?
+  contactInfo         String?        @db.VarChar(255)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  company             Company       @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  interviewFlow       InterviewFlow @relation(fields: [interviewFlowId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  status              PositionStatus    @relation(fields: [statusId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  employmentType      EmploymentType?   @relation(fields: [employmentTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  applications        Application[]
+
+  @@index([companyId])
+  @@index([interviewFlowId])
+  @@index([statusId])
+  @@index([employmentTypeId])
+  @@index([isVisible])
+  @@map("position")
+}
+
+model Application {
+  id              Int         @id @default(autoincrement())
+  positionId      Int
+  candidateId     Int
+  applicationDate DateTime           @default(now())
+  statusId        Int
+  notes           String?     @db.Text
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  deletedAt       DateTime?   // soft-delete to preserve interview history
+  position        Position    @relation(fields: [positionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  candidate       Candidate   @relation(fields: [candidateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  status          ApplicationStatus @relation(fields: [statusId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  interviews      Interview[]
+
+  @@unique([positionId, candidateId]) // a candidate may only apply once per position
+  @@index([positionId])
+  @@index([candidateId])
+  @@index([statusId])
+  @@index([applicationDate])
+  @@map("application")
+}
+
+model Interview {
+  id              Int           @id @default(autoincrement())
+  applicationId   Int
+  interviewStepId Int
+  employeeId      Int
+  interviewDate   DateTime
+  resultId        Int?
+  score           Int?          // range 0–100 — enforced at application level
+  notes           String?       @db.Text
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  application     Application   @relation(fields: [applicationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  interviewStep   InterviewStep @relation(fields: [interviewStepId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  result          InterviewResult? @relation(fields: [resultId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([applicationId])
+  @@index([interviewStepId])
+  @@index([employeeId])
+  @@index([interviewDate])
+  @@index([resultId])
+  @@map("interview")
 }
